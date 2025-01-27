@@ -1,7 +1,11 @@
 [package]
 name = "vnotify"
+description = "Efficiently monitor S3 changes without external dependencies"
 version = "0.1.0"
 edition = "2021"
+authors = ["the Deno authors"]
+license = "MIT"
+repository = "https://github.com/denoland/vnotify"
 
 [dependencies]
 anyhow = "1"

@@ -72,7 +72,7 @@ impl Config {
       prefix,
       refresh_interval: Duration::from_secs(1),
       shards: LIST_OBJECT_LIMIT,
-      revalidate_limit: 1000,
+      revalidate_limit: 3,
       time_base: Instant::now(),
     }
   }
