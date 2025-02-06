@@ -27,6 +27,13 @@ pub struct VnotifyCache {
   fencing_queue_tx: tokio::sync::mpsc::UnboundedSender<oneshot::Sender<()>>,
 }
 
+#[derive(Debug, Clone)]
+pub enum WriteCondition {
+  Unconditional,
+  IfNotPresent,
+  IfMatchEtag(String),
+}
+
 // Configuration for a `VnotifyCache`.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -63,6 +70,21 @@ struct Entry {
   body: Bytes,
   object_etag: String,
   last_used_ms: AtomicU64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Item {
+  pub body: Bytes,
+  pub object_etag: String,
+}
+
+impl<'a> From<&'a Entry> for Item {
+  fn from(entry: &'a Entry) -> Self {
+    Self {
+      body: entry.body.clone(),
+      object_etag: entry.object_etag.clone(),
+    }
+  }
 }
 
 impl Config {
@@ -113,7 +135,7 @@ impl VnotifyCache {
     }
   }
 
-  pub async fn try_get(&self, key: &str) -> Option<Bytes> {
+  pub async fn try_get(&self, key: &str) -> Option<Item> {
     let shard_index = get_shard_index_for_key(key, self.config.shards);
     let shard = &self.shards[shard_index];
     shard
@@ -121,10 +143,10 @@ impl VnotifyCache {
       .get(key)
       .await
       .flatten()
-      .map(|x| x.body.clone())
+      .map(|x| Item::from(&*x))
   }
 
-  pub async fn get(&self, key: &str) -> anyhow::Result<Option<Bytes>> {
+  pub async fn get(&self, key: &str) -> anyhow::Result<Option<Item>> {
     let shard_index = get_shard_index_for_key(key, self.config.shards);
     let shard = &self.shards[shard_index];
     shard
@@ -163,24 +185,33 @@ impl VnotifyCache {
             self.config.time_base.elapsed().as_millis() as u64,
             Ordering::Relaxed,
           );
-          x.body.clone()
+          Item::from(&*x)
         })
       })
       .map_err(|e| anyhow::anyhow!("failed to load object from s3: {:?}", e))
       .await
   }
 
-  pub async fn put(&self, key: &str, body: Bytes) -> anyhow::Result<()> {
+  pub async fn evict(&self, key: &str) {
+    let shard_index = get_shard_index_for_key(key, self.config.shards);
+    let shard = &self.shards[shard_index];
+    shard.entries.invalidate(key).await;
+  }
+
+  pub async fn put(&self, key: &str, body: Bytes, cond: WriteCondition) -> anyhow::Result<()> {
     let shard_index = get_shard_index_for_key(key, self.config.shards);
     let shard = &self.shards[shard_index];
     let res = self
       .client
       .put_object()
       .bucket(&self.config.bucket)
-      .key(key)
-      .body(ByteStream::from(body.clone()))
-      .send()
-      .await?;
+      .key(key);
+    let res = match cond {
+      WriteCondition::Unconditional => res,
+      WriteCondition::IfNotPresent => res.if_none_match("*"),
+      WriteCondition::IfMatchEtag(etag) => res.if_match(etag),
+    };
+    let res = res.body(ByteStream::from(body.clone())).send().await?;
     let object_etag = res.e_tag.unwrap_or_default();
     shard
       .entries
