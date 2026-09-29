@@ -9,12 +9,12 @@ repository = "https://github.com/denoland/vnotify"
 
 [dependencies]
 anyhow = "1"
-aws-sdk-s3 = "1"
+aws-sdk-s3 = { version = "1", default-features = false }
 blake3 = "1"
 bytes = "1"
 faster-hex = "0.9"
 futures = "0.3"
 moka = { version = "0.12", features = ["future", "sync"] }
 rand = "0.8"
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["sync", "time", "rt"] }
 tracing = "0.1"
